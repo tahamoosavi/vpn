@@ -1,0 +1,91 @@
+# .github/workflows/wireguard-vpn.yml
+name: WireGuard VPN Endpoint
+
+on:
+  workflow_dispatch: # Manual trigger recommended
+
+jobs:
+  deploy-wireguard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install WireGuard and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools resolvconf qrencode
+
+      - name: Generate WireGuard keys
+        run: |
+          # Generate private and public keys for server (runner)
+          wg genkey | tee server_private.key | wg pubkey > server_public.key
+          
+          # Generate private and public keys for client (your machine)
+          wg genkey | tee client_private.key | wg pubkey > client_public.key
+
+          # Save preshared key for added security (optional but recommended)
+          wg genpsk > preshared.key
+          
+          # Make keys readable for next steps
+          chmod 644 *.key
+
+      - name: Create WireGuard server configuration
+        run: |
+          # Get the runner's network interface (for public IP detection)
+          INTERFACE=$(ip route | grep default | awk '{print $5}')
+          
+          # Create server config
+          cat > /etc/wireguard/wg0.conf << EOF
+          [Interface]
+          Address = 10.8.0.1/24
+          PrivateKey = $(cat server_private.key)
+          ListenPort = 51820
+          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
+          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o $INTERFACE -j MASQUERADE
+          SaveConfig = true
+
+          [Peer]
+          PublicKey = $(cat client_public.key)
+          PresharedKey = $(cat preshared.key)
+          AllowedIPs = 10.8.0.2/32
+          EOF
+
+      - name: Start WireGuard interface
+        run: |
+          sudo wg-quick up wg0
+
+      - name: Create client configuration file
+        run: |
+          # Get the runner's public IP address
+          PUBLIC_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip)
+          
+          # Create client config
+          cat > client.conf << EOF
+          [Interface]
+          Address = 10.8.0.2/24
+          PrivateKey = $(cat client_private.key)
+          DNS = 1.1.1.1, 8.8.8.8
+
+          [Peer]
+          PublicKey = $(cat server_public.key)
+          PresharedKey = $(cat preshared.key)
+          Endpoint = $PUBLIC_IP:51820
+          AllowedIPs = 0.0.0.0/0, ::/0
+          PersistentKeepalive = 25
+          EOF
+
+      - name: Display connection information
+        run: |
+          echo "=== WireGuard Server Setup Complete ==="
+          echo ""
+          echo "Runner Public IP: $(curl -s ifconfig.me || echo 'unknown')"
+          echo "WireGuard Port: 51820"
+          echo ""
+          echo "=== Client Configuration (wg0.conf) ==="
+          cat client.conf
+          echo ""
+          echo "=== QR Code for Mobile Clients ==="
+          qrencode -t ansiutf8 < client.conf || echo "QR generation failed (install qrencode)"
+          echo ""
+          echo "=== Important Notes ==="
+          echo "1. This runner will be DESTROYED when workflow completes"
+          echo "2. Port 51820 must be open on the runner (GitHub hosted runners may block this)"
+          echo "3. Consider using self-hosted runners for reliable connectivity"
