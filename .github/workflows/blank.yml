@@ -11,7 +11,7 @@ jobs:
     
     steps:
       - name: Install deps
-        run: sudo apt install wireguard-dkms
+        run: sudo apt install wireguard
       - name: WireGuard SSH
         uses: omahn/wireguard-ssh-github-action@v1.4
         with:
