@@ -2,35 +2,23 @@
 name: WireGuard VPN Endpoint
 
 on:
-  workflow_dispatch:
-    inputs:
-      timeout_minutes:
-        description: 'How long to keep VPN alive (minutes)'
-        required: true
-        default: '60'
-        type: choice
-        options:
-          - 30
-          - 60
-          - 180
-          - 360
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   deploy-wireguard:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ github.event.inputs.timeout_minutes }}
+    # Remove the problematic timeout-minutes from here
     
     steps:
       - name: Install WireGuard
         run: |
           sudo apt-get update
-          sudo apt-get install -y wireguard-tools qrencode
+          sudo apt-get install -y wireguard-tools qrencode curl
 
       - name: Generate WireGuard keys
         run: |
           mkdir -p wireguard-keys
           cd wireguard-keys
-          
           wg genkey | tee server_private.key | wg pubkey > server_public.key
           wg genkey | tee client_private.key | wg pubkey > client_public.key
           wg genpsk > preshared.key
@@ -40,9 +28,8 @@ jobs:
       - name: Setup WireGuard server
         run: |
           INTERFACE=$(ip route | grep default | awk '{print $5}')
-          PUBLIC_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip)
+          PUBLIC_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || echo "AUTO_DETECT_FAILED")
           
-          # Create server config
           sudo tee /etc/wireguard/wg0.conf > /dev/null << EOF
           [Interface]
           Address = 10.8.0.1/24
@@ -58,22 +45,20 @@ jobs:
           EOF
           
           sudo chmod 600 /etc/wireguard/wg0.conf
-
-      - name: Start WireGuard and display connection info
-        run: |
           sudo wg-quick up wg0
+
+      - name: Display connection information
+        run: |
+          PUBLIC_IP=$(curl -s ifconfig.me || echo "IP_FETCH_FAILED")
           
-          # Display connection info
-          echo "========================================="
-          echo "🚀 WireGuard VPN Server is LIVE!"
-          echo "========================================="
-          echo ""
-          echo "📡 Server Public IP: $(curl -s ifconfig.me)"
-          echo "🔌 Port: 51820"
-          echo "⏰ Will run for: ${{ github.event.inputs.timeout_minutes }} minutes"
+          echo "=========================================="
+          echo "🚀 WIREGUARD VPN READY TO CONNECT"
+          echo "=========================================="
+          echo "Server IP: $PUBLIC_IP"
+          echo "Port: 51820"
           echo ""
           
-          # Create and display client config
+          # Create client config
           cat > client.conf << EOF
           [Interface]
           Address = 10.8.0.2/24
@@ -83,84 +68,64 @@ jobs:
           [Peer]
           PublicKey = $(cat wireguard-keys/server_public.key)
           PresharedKey = $(cat wireguard-keys/preshared.key)
-          Endpoint = $(curl -s ifconfig.me):51820
+          Endpoint = $PUBLIC_IP:51820
           AllowedIPs = 0.0.0.0/0
           PersistentKeepalive = 25
           EOF
           
-          echo "📋 CLIENT CONFIGURATION:"
-          echo "========================================="
+          echo "📋 CLIENT CONFIGURATION (copy ALL of this):"
+          echo "=========================================="
           cat client.conf
           echo ""
           
-          # Show QR code if qrencode installed
-          echo "📱 QR Code (for mobile clients):"
-          qrencode -t ansiutf8 < client.conf 2>/dev/null || echo "QR code not available"
+          # QR code
+          echo "📱 QR Code:"
+          qrencode -t ansiutf8 < client.conf 2>/dev/null || echo "Install qrencode for QR code"
+          
+          # Test port
+          echo ""
+          echo "🔍 Test from YOUR machine with:"
+          echo "nc -vzu $PUBLIC_IP 51820"
+          echo ""
+          echo "⚠️  If 'Connection timed out', GitHub blocks inbound connections."
+
+      # ========== SIMPLE KEEP-ALIVE ==========
+      - name: Keep VPN alive (interactive)
+        run: |
+          echo "🔄 VPN server is running..."
+          echo "This workflow will auto-stop after 360 minutes (6h max)"
+          echo ""
+          echo "⏰ Time remaining: 360 minutes"
+          echo "Press 'Cancel workflow' in GitHub UI to stop early"
+          echo ""
+          echo "To connect from your Linux machine:"
+          echo "1. Copy client config from above"
+          echo "2. Save to /etc/wireguard/github-vpn.conf"
+          echo "3. Run: sudo wg-quick up github-vpn"
           echo ""
           
-          # Test if port is accessible
-          echo "🔍 Testing port accessibility..."
-          timeout 2 bash -c "echo >/dev/tcp/$(curl -s ifconfig.me)/51820" 2>/dev/null && \
-            echo "✅ Port appears accessible" || \
-            echo "⚠️  Port may be blocked (common on GitHub runners)"
-
-      # ========== CRITICAL: KEEP-ALIVE SECTION ==========
-      - name: Keep VPN alive (this step runs until timeout)
-        run: |
-          echo "🔄 VPN server is running. Will stop in ${{ github.event.inputs.timeout_minutes }} minutes..."
-          echo "Press Ctrl+C in workflow logs to stop early"
-          
-          # Create a health check endpoint that keeps the job alive
-          # Install a simple HTTP server to prove it's working
-          sudo apt-get install -y python3
-          
-          # Create a simple status page
-          cat > /tmp/vpn-status.html << EOF
-          <html><body>
-          <h1>GitHub Actions WireGuard VPN</h1>
-          <p>Status: <span style="color:green">🟢 RUNNING</span></p>
-          <p>Uptime: <span id="uptime">0</span> seconds</p>
-          <p>Client IP: 10.8.0.2</p>
-          <p>Server IP: $(curl -s ifconfig.me)</p>
-          <script>
-            let start = Date.now();
-            setInterval(() => {
-              document.getElementById('uptime').textContent = 
-                Math.floor((Date.now() - start)/1000);
-            }, 1000);
-          </script>
-          </body></html>
-          EOF
-          
-          # Start a simple HTTP server in background
-          python3 -m http.server 8080 --directory /tmp &
-          HTTP_PID=$!
-          
-          # Keep-alive loop with periodic status updates
-          COUNTER=0
-          TIMEOUT_MINUTES=${{ github.event.inputs.timeout_minutes }}
-          TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60))
-          
-          while [ $COUNTER -lt $TIMEOUT_SECONDS ]; do
-            # Show status every 30 seconds
-            if [ $((COUNTER % 30)) -eq 0 ]; then
-              echo "⏰ VPN uptime: ${COUNTER}s / ${TIMEOUT_SECONDS}s"
+          # Simple countdown display
+          TOTAL_MINUTES=360
+          for ((minute=1; minute<=TOTAL_MINUTES; minute++)); do
+            remaining=$((TOTAL_MINUTES - minute))
+            
+            # Show status every 5 minutes
+            if [ $((minute % 5)) -eq 0 ]; then
+              echo "[$(date '+%H:%M:%S')] VPN uptime: ${minute}m (${remaining}m remaining)"
+              # Show WireGuard status
+              echo "WireGuard status:"
               sudo wg show
-              echo "----------------------------------------"
+              echo "--------------------------------"
             fi
             
-            sleep 1
-            COUNTER=$((COUNTER + 1))
+            sleep 60  # Sleep for 1 minute
           done
           
-          # Cleanup
-          kill $HTTP_PID 2>/dev/null || true
-          echo "⏹️  Timeout reached, stopping VPN..."
+          echo "⏹️  6-hour limit reached, stopping VPN..."
 
-      - name: Cleanup (always runs)
+      - name: Cleanup
         if: always()
         run: |
           echo "🧹 Cleaning up..."
           sudo wg-quick down wg0 2>/dev/null || true
-          sudo rm -f /etc/wireguard/wg0.conf
           echo "✅ VPN stopped"
