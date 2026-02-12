@@ -1,0 +1,56 @@
+name: Tailscale Exit Node
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  tailscale-exit-node:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Start Tailscale and get login link
+        run: |
+          echo "Starting Tailscale..."
+          sudo tailscale up --advertise-exit-node --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" || {
+            echo "Auth failed, generating login link..."
+            sudo tailscale up --advertise-exit-node 2>&1 | tee /tmp/tailscale.log
+            
+            # Extract login URL if present
+            if grep -q "https://" /tmp/tailscale.log; then
+              LOGIN_URL=$(grep -o 'https://[^ ]*' /tmp/tailscale.log | head -1)
+              echo "==================================="
+              echo "TAILSCALE LOGIN REQUIRED"
+              echo "==================================="
+              echo "Login URL: $LOGIN_URL"
+              echo "==================================="
+              echo "Please visit this URL to authenticate"
+              echo "==================================="
+            fi
+          }
+
+      - name: Verify Tailscale status
+        run: |
+          sleep 5
+          sudo tailscale status
+          echo ""
+          echo "Exit node advertised. To enable:"
+          echo "1. Go to Tailscale admin console"
+          echo "2. Find this machine"
+          echo "3. Enable 'Use as exit node'"
+
+      - name: Keep runner alive
+        run: |
+          echo "Tailscale exit node is running..."
+          echo "This workflow will run for up to 6 hours (GitHub's max)"
+          # Keep the workflow running
+          sleep 21600  # 6 hours
