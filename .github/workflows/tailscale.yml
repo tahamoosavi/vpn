@@ -30,6 +30,14 @@ jobs:
             tightvncserver \
             dbus-x11 \
             firefox \
+            xauth \
+            x11-xserver-utils \
+            xfonts-base \
+            xfonts-75dpi \
+            xfonts-100dpi \
+            xfonts-scalable \
+            fontconfig \
+            fonts-dejavu-core \
             --no-install-recommends
           
           echo "Desktop environment installed"
@@ -85,27 +93,36 @@ jobs:
         env:
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
+          set -euo pipefail
+
           # Create VNC directory
-          mkdir -p ~/.vnc
-          
-          # Set VNC password using echo pipe method (works with tightvncserver)
-          echo "$SSH_PASSWORD" > /tmp/vncpass.txt
-          echo "$SSH_PASSWORD" >> /tmp/vncpass.txt
-          vncpasswd < /tmp/vncpass.txt
-          rm /tmp/vncpass.txt
-          
-          # Create xstartup file for XFCE
-          cat > ~/.vnc/xstartup << 'EOF'
+          mkdir -p "$HOME/.vnc"
+          chmod 700 "$HOME/.vnc"
+
+          # Set VNC password non-interactively and answer 'n' to view-only prompt
+          printf "%s\n%s\nn\n" "$SSH_PASSWORD" "$SSH_PASSWORD" | vncpasswd
+
+          # Ensure .Xauthority exists and has an entry for display :1
+          # Generate a temporary MIT-MAGIC-COOKIE and add it for display :1
+          COOKIE=$(mcookie)
+          touch "$HOME/.Xauthority"
+          xauth add :1 . "$COOKIE"
+          # Export XAUTHORITY so Xvnc picks it up
+          export XAUTHORITY="$HOME/.Xauthority"
+
+          # Create xstartup file for XFCE (use exec to replace the shell)
+          cat > "$HOME/.vnc/xstartup" << 'EOF'
           #!/bin/bash
           xrdb $HOME/.Xresources
-          startxfce4 &
+          # startxfce4 may background itself; use exec to ensure it is the session process
+          exec startxfce4
           EOF
-                    
-                    chmod +x ~/.vnc/xstartup
-          
+          chmod +x "$HOME/.vnc/xstartup"
+
           # Start VNC server on display :1 (port 5901)
-          vncserver :1 -geometry 1920x1080 -depth 24
-          
+          # Use -localhost no so remote clients can connect directly to the advertised IP
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+
           echo "VNC server started on display :1 (port 5901)"
 
       - name: Verify Tailscale status
