@@ -14,37 +14,80 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Tailscale
+      - name: Install Tailscale and SSH server
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
 
       - name: Start Tailscale and get login link
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
-          echo "Starting Tailscale..."
-          sudo tailscale up --advertise-exit-node --authkey="${{ secrets.TAILSCALE_AUTHKEY }}" || {
-            echo "Auth failed, generating login link..."
-            sudo tailscale up --advertise-exit-node 2>&1 | tee /tmp/tailscale.log
-            
-            # Extract login URL if present
-            if grep -q "https://" /tmp/tailscale.log; then
-              LOGIN_URL=$(grep -o 'https://[^ ]*' /tmp/tailscale.log | head -1)
-              echo "==================================="
-              echo "TAILSCALE LOGIN REQUIRED"
-              echo "==================================="
-              echo "Login URL: $LOGIN_URL"
-              echo "==================================="
-              echo "Please visit this URL to authenticate"
-              echo "==================================="
-            fi
-          }
+          # Validate required secrets
+          if [ -z "$TAILSCALE_AUTHKEY" ]; then
+            echo "ERROR: TAILSCALE_AUTHKEY secret is not set"
+            echo "Please add TAILSCALE_AUTHKEY to your repository secrets"
+            exit 1
+          fi
+          
+          if [ -z "$SSH_PASSWORD" ]; then
+            echo "ERROR: SSH_PASSWORD secret is not set"
+            echo "Please add SSH_PASSWORD to your repository secrets"
+            exit 1
+          fi
+          
+          echo "Starting Tailscale with SSH enabled..."
+          sudo tailscale up --advertise-exit-node --ssh --authkey="$TAILSCALE_AUTHKEY"
+          
+          if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to authenticate with Tailscale"
+            echo "Please check your TAILSCALE_AUTHKEY is valid"
+            exit 1
+          fi
+          
+          echo "Tailscale started successfully"
+
+      - name: Configure SSH
+        env:
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          # Start SSH service
+          sudo systemctl start ssh
+          sudo systemctl enable ssh
+          
+          # Set user password from secret
+          echo "runner:$SSH_PASSWORD" | sudo chpasswd
+          
+          # Allow password authentication
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+          
+          echo "SSH configured successfully"
 
       - name: Verify Tailscale status
         run: |
           sleep 5
-          echo "Exit node advertised. To enable:"
-          echo "1. Go to Tailscale admin console"
-          echo "2. Find this machine"
-          echo "3. Enable 'Use as exit node'"
+          echo "==================================="
+          echo "TAILSCALE EXIT NODE RUNNING"
+          echo "==================================="
+          echo "Status: Active"
+          echo "SSH: Enabled"
+          echo "Exit Node: Advertised"
+          echo ""
+          echo "Connection Info:"
+          echo "  - Check Tailscale admin console for machine name"
+          echo "  - SSH using: ssh runner@<machine-name>"
+          echo "  - Or use Tailscale IP from admin console"
+          echo ""
+          echo "Next steps:"
+          echo "1. Go to https://login.tailscale.com/admin/machines"
+          echo "2. Find this machine in the list"
+          echo "3. Enable 'Use as exit node' if needed"
+          echo "4. Note the machine name/IP for SSH access"
+          echo "==================================="
 
       - name: Keep runner alive
         run: |
