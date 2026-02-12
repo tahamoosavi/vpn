@@ -19,6 +19,19 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo apt-get update
           sudo apt-get install -y openssh-server
+          
+          # Install lightweight desktop environment (XFCE) and VNC server
+          echo "Installing desktop environment..."
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            tigervnc-standalone-server \
+            tigervnc-common \
+            dbus-x11 \
+            firefox \
+            --no-install-recommends
+          
+          echo "Desktop environment installed"
 
       - name: Start Tailscale and get login link
         env:
@@ -67,6 +80,32 @@ jobs:
           
           echo "SSH configured successfully"
 
+      - name: Configure VNC Server
+        env:
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          # Create VNC directory
+          mkdir -p ~/.vnc
+          
+          # Set VNC password (same as SSH password)
+          echo "$SSH_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          
+          # Create xstartup file for XFCE
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/bash
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          exec startxfce4
+          EOF
+          
+          chmod +x ~/.vnc/xstartup
+          
+          # Start VNC server on display :1 (port 5901)
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          
+          echo "VNC server started on display :1 (port 5901)"
+
       - name: Verify Tailscale status
         run: |
           sleep 5
@@ -75,18 +114,27 @@ jobs:
           echo "==================================="
           echo "Status: Active"
           echo "SSH: Enabled"
+          echo "VNC: Enabled (Display :1, Port 5901)"
+          echo "Desktop: XFCE4"
           echo "Exit Node: Advertised"
           echo ""
           echo "Connection Info:"
           echo "  - Check Tailscale admin console for machine name"
-          echo "  - SSH using: ssh runner@<machine-name>"
-          echo "  - Or use Tailscale IP from admin console"
+          echo "  - SSH: ssh runner@<machine-name>"
+          echo "  - VNC: <machine-name>:5901 or <tailscale-ip>:5901"
+          echo "  - Password: (from SSH_PASSWORD secret)"
+          echo ""
+          echo "VNC Clients:"
+          echo "  - TigerVNC Viewer (recommended)"
+          echo "  - RealVNC Viewer"
+          echo "  - Any VNC client supporting VNC protocol"
           echo ""
           echo "Next steps:"
           echo "1. Go to https://login.tailscale.com/admin/machines"
           echo "2. Find this machine in the list"
-          echo "3. Enable 'Use as exit node' if needed"
-          echo "4. Note the machine name/IP for SSH access"
+          echo "3. Note the machine name/IP"
+          echo "4. Connect via VNC client to <machine-name>:5901"
+          echo "5. Enable 'Use as exit node' if needed"
           echo "==================================="
 
       - name: Keep runner alive
