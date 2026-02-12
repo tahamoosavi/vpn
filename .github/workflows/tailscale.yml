@@ -41,8 +41,6 @@ jobs:
       - name: Verify Tailscale status
         run: |
           sleep 5
-          sudo tailscale status
-          echo ""
           echo "Exit node advertised. To enable:"
           echo "1. Go to Tailscale admin console"
           echo "2. Find this machine"
