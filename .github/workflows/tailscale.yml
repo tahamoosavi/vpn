@@ -18,6 +18,8 @@ jobs:
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo apt-get update
+          
+          # Install SSH server
           sudo apt-get install -y openssh-server
           
           # Install lightweight desktop environment (XFCE) and VNC server
@@ -25,8 +27,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xfce4 \
             xfce4-goodies \
-            tigervnc-standalone-server \
-            tigervnc-common \
+            tightvncserver \
             dbus-x11 \
             firefox \
             --no-install-recommends
@@ -87,22 +88,23 @@ jobs:
           # Create VNC directory
           mkdir -p ~/.vnc
           
-          # Set VNC password (same as SSH password)
-          echo "$SSH_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
+          # Set VNC password using echo pipe method (works with tightvncserver)
+          echo "$SSH_PASSWORD" > /tmp/vncpass.txt
+          echo "$SSH_PASSWORD" >> /tmp/vncpass.txt
+          vncpasswd < /tmp/vncpass.txt
+          rm /tmp/vncpass.txt
           
           # Create xstartup file for XFCE
           cat > ~/.vnc/xstartup << 'EOF'
           #!/bin/bash
-          unset SESSION_MANAGER
-          unset DBUS_SESSION_BUS_ADDRESS
-          exec startxfce4
+          xrdb $HOME/.Xresources
+          startxfce4 &
           EOF
-          
-          chmod +x ~/.vnc/xstartup
+                    
+                    chmod +x ~/.vnc/xstartup
           
           # Start VNC server on display :1 (port 5901)
-          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          vncserver :1 -geometry 1920x1080 -depth 24
           
           echo "VNC server started on display :1 (port 5901)"
 
