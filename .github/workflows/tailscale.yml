@@ -29,7 +29,6 @@ jobs:
             xfce4-goodies \
             tightvncserver \
             dbus-x11 \
-            firefox \
             xauth \
             x11-xserver-utils \
             xfonts-base \
